@@ -1,54 +1,72 @@
 import csv
-import sqlite3
 import json
 import os
 import sys
+from pathlib import Path
+from sqlite3 import connect
 
-csv.field_size_limit(sys.maxsize)
 
-def parse_csv_and_store(filename, db_filename):
-    if os.path.exists(db_filename):
-        os.remove(db_filename)
-    conn = sqlite3.connect(db_filename)
+def get_db_connection():
+    db_path = Path(__file__).parent.parent / "db" / "routes.db"
+    # Ensure the db directory exists
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    return connect(db_path)
+
+
+def parse_csv_and_store(filename):
+    # Increase the CSV field size limit
+    csv.field_size_limit(1_000_000)
+
+    conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Create routes table
-    cursor.execute('''CREATE TABLE IF NOT EXISTS routes (
-                        route_id INTEGER PRIMARY KEY,
-                        from_port TEXT,
-                        to_port TEXT,
-                        leg_duration INTEGER
-                    )''')
+    # Creating tables
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS routes (
+            route_id INTEGER PRIMARY KEY,
+            from_port TEXT,
+            to_port TEXT,
+            leg_duration INTEGER
+        )"""
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS points (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            route_id INTEGER,
+            longitude REAL,
+            latitude REAL,
+            timestamp INTEGER,
+            speed REAL
+        )"""
+    )
 
-    # Create points table
-    cursor.execute('''CREATE TABLE IF NOT EXISTS points (
-                        id INTEGER PRIMARY KEY,
-                        route_id INTEGER,
-                        longitude REAL,
-                        latitude REAL,
-                        timestamp INTEGER,
-                        speed REAL
-                    )''')
-
-    with open(filename, 'r') as csv_file:
-        csv_reader = csv.reader(csv_file)
-        next(csv_reader)
+    with open(filename, mode="r") as csv_file:
+        csv_reader = csv.DictReader(csv_file)
         for row in csv_reader:
-            route_id = int(row[0])
-            from_port = row[1]
-            to_port = row[2]
-            leg_duration = int(row[3])
+            route_id = int(row["route_id"])
+            from_port = row["from_port"]
+            to_port = row["to_port"]
+            leg_duration = int(row["leg_duration"])
+            points = json.loads(row["points"])
 
-            points_str = row[4]
-            points = json.loads(points_str)
-
-            cursor.execute('''INSERT INTO routes (route_id, from_port, to_port, leg_duration)
-                            VALUES (?, ?, ?, ?)''', (route_id, from_port, to_port, leg_duration))
+            cursor.execute(
+                "INSERT INTO routes (route_id, from_port, to_port, leg_duration) VALUES (?, ?, ?, ?)",
+                (route_id, from_port, to_port, leg_duration),
+            )
 
             for point in points:
-                longitude, latitude, timestamp, speed = point
-                cursor.execute('''INSERT INTO points (route_id, longitude, latitude, timestamp, speed)
-                                VALUES (?, ?, ?, ?, ?)''', (route_id, longitude, latitude, timestamp, speed))
+                cursor.execute(
+                    "INSERT INTO points (route_id, longitude, latitude, timestamp, speed) VALUES (?, ?, ?, ?, ?)",
+                    (route_id, *point),
+                )
 
     conn.commit()
     conn.close()
+
+
+if __name__ == "__main__":
+    data_path = Path(__file__).parent.parent / "data" / "web_challenge.csv"
+    parse_csv_and_store(data_path)
